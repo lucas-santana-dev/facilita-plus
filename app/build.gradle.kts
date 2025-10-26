@@ -8,7 +8,7 @@ plugins {
 }
 
 android {
-    namespace = "br.com.plussapps.facilitaplus"
+    namespace = "br.com.plusapps.facilitaplus"
     compileSdk {
         version = release(36)
     }
