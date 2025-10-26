@@ -16,7 +16,7 @@ Critérios de aceitação
 - Branch inicial (main) com commit inicial feito.
 
 Tarefas técnicas (checklist)
-- [ ] Criar projeto Android no Android Studio com package sugerido: com.lucassantana.facilitaplus
+- [ ] Criar projeto Android no Android Studio com package sugerido: br.com.plussapps.facilitaplus
 - [ ] Configurar Gradle (Kotlin JVM target, composeOptions) e usar Kotlin DSL (build.gradle.kts)
 - [ ] Adicionar plugins e dependências iniciais:
   - kotlin-android, kotlin-kapt/ksp (se usar), com.google.gms.google-services (mas não commitar google‑services.json)
@@ -48,7 +48,7 @@ Exemplo de snippet (build.gradle.kts — app) (resumo)
 android {
   compileSdk = 34
   defaultConfig {
-    applicationId = "com.lucassantana.facilitaplus"
+    applicationId = "br.com.plussapps.facilitaplus"
     minSdk = 26
     targetSdk = 34
     versionCode = 1
