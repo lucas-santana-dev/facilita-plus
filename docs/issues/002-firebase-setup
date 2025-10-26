@@ -1,0 +1,257 @@
+# 02 - Configurar Firebase (Auth, Firestore, Storage, FCM)
+
+Issue: https://github.com/lucas-santana-dev/facilita-plus/issues/2
+
+Resumo
+- Objetivo: Criar projeto Firebase, cadastrar o app Android, gerar google-services.json (local), habilitar Authentication (email + Google), configurar Firestore (coleções iniciais + regras de desenvolvimento), configurar Storage (bucket) e FCM (Cloud Messaging). Adicionar dependências (firebase-bom) no build e documentar o processo, regras e índices iniciais.
+- Estimativa: 2–3 horas
+- Labels sugeridas: infra, backend, firebase, high-priority
+- Assignee: @lucas-santana-dev
+
+Critérios de aceitação
+- Projeto Firebase criado no console e app Android adicionado (google-services.json obtido e usado localmente).
+- Dependências Firebase adicionadas ao build (BOM + módulos utilizados) e sync do Gradle passa.
+- Auth (Email + Google) configurados (regras e teste manual de login).
+- Firestore com collections iniciais (users, serviceProviders, serviceLeads, reviews, subscriptions) modeladas e regras de desenvolvimento aplicadas.
+- Storage configurado e testado (upload/download simples).
+- FCM configurado e teste de envio de notificação via console ou script.
+- README.md atualizado com instruções de como adicionar google-services.json localmente e variáveis/segredos para CI.
+- Checklist da issue marcado e PR aberto com as mudanças (ou instruções claras se google-services.json não foi commitado).
+
+Tarefas técnicas (checklist)
+- [ ] Criar projeto no Firebase Console (escolher região adequada).
+- [ ] Adicionar app Android no projeto Firebase (package/applicationId = br.com.plusapps.facilitaplus) e baixar google-services.json (guardar localmente).
+- [ ] Adicionar dependências Firebase no app/build.gradle.kts (usar BOM).
+- [ ] Habilitar Authentication: Email/Password e Login via Google (configurar OAuth consent e SHA-1 se necessário).
+- [ ] Criar collections iniciais no Firestore (esquema sugerido abaixo).
+- [ ] Definir regras de Firestore para ambiente de desenvolvimento e documentar diferenças para produção.
+- [ ] Configurar Firebase Storage (bucket) e regras de dev.
+- [ ] Habilitar Firebase Cloud Messaging (FCM) e testar envio de push.
+- [ ] Adicionar instruções no README sobre onde colocar google-services.json e como configurar CI (service account ou secrets).
+- [ ] Commit/PR com mudanças em build files, docs e exemplos; NÃO commitar google-services.json.
+
+Requisitos/Dependências a adicionar (exemplo: app/build.gradle.kts)
+- Usando Firebase BOM (exemplo de snippet a colar em app/build.gradle.kts):
+```kotlin
+// build.gradle.kts (module: app) — dependências Firebase
+dependencies {
+    // BOM (gerencia versões dos módulos Firebase)
+    implementation(platform("com.google.firebase:firebase-bom:32.1.1"))
+
+    // módulos Firebase (escolha conforme necessidade)
+    implementation("com.google.firebase:firebase-auth-ktx")
+    implementation("com.google.firebase:firebase-firestore-ktx")
+    implementation("com.google.firebase:firebase-storage-ktx")
+    implementation("com.google.firebase:firebase-messaging-ktx")
+    implementation("com.google.firebase:firebase-crashlytics-ktx") // opcional
+}
+```
+- Plugins (no root build.gradle.kts ou pluginManagement): adicionar plugin google-services e aplicá-lo no módulo app:
+```kotlin
+// raiz build.gradle.kts (exemplo)
+plugins {
+  // ... outros plugins
+  id("com.google.gms.google-services") version "4.3.15" apply false
+  id("com.google.firebase.crashlytics") version "2.9.6" apply false
+}
+```
+No app/build.gradle.kts (aplicar plugin):
+```kotlin
+plugins {
+  // ... outros plugins
+  id("com.google.gms.google-services")
+  id("com.google.firebase.crashlytics") // se usar Crashlytics
+}
+```
+
+Firestore — Modelagem inicial (collections & campos sugeridos)
+- users (documentId = uid)
+  - name: string
+  - email: string
+  - phone: string?
+  - photoUrl: string?
+  - role: "customer" | "provider"
+  - createdAt: timestamp
+  - updatedAt: timestamp
+- serviceProviders (documentId = providerId)
+  - userId: reference (users/{uid}) ou string
+  - name: string
+  - services: array<string> (ids ou nomes)
+  - rating: double
+  - location: geopoint (se precisar)
+  - available: boolean
+  - createdAt / updatedAt
+- serviceLeads (pedidos/solicitações)
+  - customerId: ref/string
+  - providerId: ref/string
+  - status: "pending" | "accepted" | "declined" | "completed" | "cancelled"
+  - details: map/object
+  - priceEstimate: number?
+  - createdAt / updatedAt
+- reviews
+  - authorId, targetProviderId, rating (int), comment, createdAt
+- subscriptions / payments
+  - userId, planId, status, startedAt, endsAt, metadata
+
+Índices iniciais (Firestore)
+- serviceProviders: criar index por location (se usar queries geo), por rating desc para lista ordenada.
+- serviceLeads: composite index (providerId, status, createdAt desc) para listar leads do provider.
+- reviews: index (targetProviderId, rating) se fizer queries por avaliação.
+
+Exemplo de regra de index (firestore indexes):
+- Para provider leads:
+  - collection: serviceLeads
+  - fields: providerId ASC, status ASC, createdAt DESC
+  - output: index
+
+Firestore Rules — Exemplo (modo DEV — permissivo, usar apenas em desenvolvimento)
+```js
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // regra dev: leitura e escrita para usuários autenticados
+    match /{document=**} {
+      allow read, write: if request.auth != null;
+    }
+  }
+}
+```
+Regras recomendadas para produção (exemplo básico)
+```js
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // users
+    match /users/{userId} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn() && request.auth.uid == userId;
+    }
+
+    // serviceProviders — leitura pública, escrita apenas por providers/ops
+    match /serviceProviders/{providerId} {
+      allow read: if true;
+      allow create: if isSignedIn();
+      allow update, delete: if isSignedIn() && request.auth.uid == resource.data.userId;
+    }
+
+    // leads
+    match /serviceLeads/{leadId} {
+      allow create: if isSignedIn();
+      allow read: if isSignedIn() && (request.auth.uid == resource.data.customerId || request.auth.uid == resource.data.providerId);
+      allow update: if isSignedIn() && (request.auth.uid == resource.data.providerId || request.auth.uid == resource.data.customerId);
+    }
+
+    // reviews
+    match /reviews/{reviewId} {
+      allow create: if isSignedIn();
+      allow read: if true;
+      allow delete: if false; // ou regras mais específicas
+    }
+  }
+}
+```
+
+Storage Rules — DEV (permissivo)
+```js
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /{allPaths=**} {
+      allow read, write: if request.auth != null;
+    }
+  }
+}
+```
+Produção: restringir por path (ex.: only owners can overwrite profile images), validar contentType/size.
+
+Authentication — Passos
+- No console Firebase → Authentication → Sign-in method:
+  - Habilitar Email/Password
+  - Habilitar Google (configurar OAuth consent screen e registrar SHA-1 e SHA-256 se necessário para login via Google)
+- Adicionar SHA-1 (e SHA-256) do keystore de desenvolvimento/release no Firebase project settings (necessário para Google Sign-In e Dynamic Links).
+- Teste: criar usuário pelo console e autenticar via app.
+
+FCM — Passos básicos de teste
+- No Firebase Console → Cloud Messaging → enviar mensagem de teste para um token registrado no app.
+- No app, implementar FirebaseMessagingService para receber mensagens e logar token.
+- Para enviar notificações programáticas, use admin SDK (server) ou Firebase Console.
+
+CI / Secrets / google-services.json
+- NÃO comitar google-services.json.
+- Para CI (GitHub Actions), use:
+  - Service account JSON (com permissões mínimas) armazenada como secret (e.g., FIREBASE_SERVICE_ACCOUNT) e arquivo gravado em tempo de execução.
+  - Ou use secrets para chaves específicas e gerar google-services.json dinamicamente se necessário.
+- Documentar no README:
+  - Onde colocar google-services.json (app/)
+  - Como configurar localmente (SHA fingerprints)
+  - Como configurar CI (service account + gcloud / firebase-tools) e deploy (se aplicar)
+
+Exemplos de comandos úteis
+- Gerar SHA-1 (debug keystore padrão):
+```bash
+# Windows (PowerShell) - ajustando caminho se necessário
+keytool -list -v -keystore %USERPROFILE%\.android\debug.keystore -alias androiddebugkey -storepass android -keypass android
+```
+- Testar build:
+```bash
+./gradlew clean assembleDebug
+```
+- Ver token FCM no log (no app): logcat filter ou println do FirebaseMessagingService.onNewToken
+
+Documentação / README — o que adicionar
+- Instruções passo-a-passo para criar o app no Firebase Console e onde colocar google-services.json (NÃO commitar).
+- Como adicionar SHA-1/256.
+- Como rodar testes manuais (logar, enviar notificação do console).
+- Como configurar CI (se aplicar): usar service account e firebase-tools.
+
+Notas de segurança e operação
+- Nunca commitar google-services.json nem service account JSON em repositório público.
+- Minimize permissões do service account usado em CI (use roles/firebase.admin apenas se necessário).
+- Em produção, regras Firestore/Storage devem ser restritas; usar testes de segurança do Firebase para validar regras.
+- Monitorar custos do Firestore/Storage/Cloud Messaging e estimar plano conforme uso.
+
+Dicas de migração / testes
+- Primeiro aplique regras permissivas em um ambiente de desenvolvimento separado (projeto Firebase dev).
+- Teste fluxos: registro/login, criação de provider, criação de lead, upload de imagem, envio/recebimento de notificação.
+- Use o Firebase Emulator Suite localmente para testar autenticação, firestore, storage e cloud functions sem custos e sem risco. Comandos básicos:
+```bash
+# instalar firebase-tools (se ainda não tiver)
+npm install -g firebase-tools
+
+# iniciar emulação (após configurar firebase.json)
+firebase emulators:start --only firestore,auth,storage,functions
+```
+
+Definição de pronto (DoD) para esta issue
+- PR aberto com mudanças em build files e docs (sem google-services.json).
+- README contendo instruções de setup local (onde colocar google-services.json, SHA, testes).
+- Testes manuais documentados passando (login, leitura/escrita básica, upload/download, push test).
+- Regras de Firestore/Storage de desenvolvimento adicionadas e exemplos de regras de produção documentadas.
+- Índices Firestore necessários criados ou instruções para criá-los documentadas.
+
+Comandos Git / exemplo de PR (exemplo)
+```bash
+# criar branch para trabalhar
+git checkout -b feature/02-configuracao-firebase
+
+# after changes to build files and docs (do NOT add google-services.json)
+git add app/build.gradle.kts docs/issues/002-firebase-setup.md README.md
+git commit -m "feat(02): configurar Firebase (dependencies, docs e instruções)"
+git push -u origin feature/02-configuracao-firebase
+
+# criar PR com base develop (ou main conforme seu fluxo)
+gh pr create --title "[#2] feat: Configuração Firebase" --body "Configura dependências Firebase, documenta setup e instruções. google-services.json não incluído." --base develop
+```
+
+Observações finais
+- Recomendo criar dois projetos no Firebase: `facilita-plus-dev` e `facilita-plus-prod` para isolar desenvolvimento e produção (regras/quotas/alertas).
+- Use Firebase Emulator Suite para validar regras antes de publicar.
+- Se quiser, eu gero o snippet exato para app/build.gradle.kts (com as aliases do Version Catalog) e o conteúdo firebase.json / firebase emulators config para facilitar testes locais.
+
+---
+Ficha técnica: issue #2 — documentação de refinamento técnico produzida por Copilot.
