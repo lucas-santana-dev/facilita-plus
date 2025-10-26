@@ -1,4 +1,4 @@
-package br.com.plussapps.facilitaplus.ui.theme
+package br.com.plusapps.facilitaplus.ui.theme
 
 import androidx.compose.material3.Typography
 import androidx.compose.ui.text.TextStyle
